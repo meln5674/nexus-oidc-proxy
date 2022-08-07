@@ -1,0 +1,4 @@
+/main
+/proxy
+*.swp
+integration-test/kind.config

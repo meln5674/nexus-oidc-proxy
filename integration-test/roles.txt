@@ -1,0 +1,1 @@
+role1 {"id":"role1","name":"Role 1","description":"Role 1","privileges":[],"roles":[]}

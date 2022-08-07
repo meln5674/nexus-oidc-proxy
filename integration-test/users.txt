@@ -1,0 +1,1 @@
+user1 {"userId":"user1","firstName":"user","lastName":"one","emailAddress":"user1@example.com","status":"active","roles":["nx-anonymous"],"password":"user1Password"}
