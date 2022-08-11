@@ -42,6 +42,11 @@ jobs:
           yq -i '.version = "${{ steps.tagName.outputs.tag }}"' deploy/helm/nexus-oidc-proxy/Chart.yaml
           yq -i '.appVersion = "${{ steps.tagName.outputs.tag }}"' deploy/helm/nexus-oidc-proxy/Chart.yaml
 
+      - name: Lint
+        run: |
+          helm lint deploy/helm/nexus-oidc-proxy
+          helm template deploy/helm/nexus-oidc-proxy
+
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.4.0
         env:
