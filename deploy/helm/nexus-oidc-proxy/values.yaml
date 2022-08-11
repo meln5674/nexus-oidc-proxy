@@ -87,7 +87,9 @@ config:
     name:
     key: nexus-oidc-proxy.cfg
   # Embedded nexus-oidc-proxy.cfg
-  yaml: {}
+  yaml:
+    http:
+      address: 0.0.0.0:8080
 
 credentials:
   # Reference to secret containing credentials
