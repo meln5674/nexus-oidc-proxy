@@ -22,7 +22,7 @@ jobs:
         run: |
           git config user.name "$GITHUB_ACTOR"
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
-      
+
       - name: Get Tag
         id: tagName
         uses: olegtarasov/get-tag@v2.1
@@ -39,8 +39,13 @@ jobs:
         
       - name: Set Chart Version
         run: |
-          yq -i '.version = "${{ steps.tagName.outputs.tag }}"' deploy/helm/nexus-oidc-proxy/Chart.yaml
-          yq -i '.appVersion = "${{ steps.tagName.outputs.tag }}"' deploy/helm/nexus-oidc-proxy/Chart.yaml
+          if [ -n "${{ steps.tagName.outputs.tag }}" ]; then
+            yq -i '.version = "${{ steps.tagName.outputs.tag }}"' deploy/helm/nexus-oidc-proxy/Chart.yaml
+            yq -i '.appVersion = "${{ steps.tagName.outputs.tag }}"' deploy/helm/nexus-oidc-proxy/Chart.yaml
+          else
+            yq -i '.version = .version + "-'"${GITHUB_SHA}"'"' deploy/helm/nexus-oidc-proxy/Chart.yaml
+            yq -i '.appVersion = "'"${GITHUB_SHA}"'"' deploy/helm/nexus-oidc-proxy/Chart.yaml
+          fi
 
       - name: Lint
         run: |
