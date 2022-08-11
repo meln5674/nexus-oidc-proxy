@@ -11,4 +11,14 @@ entries:
     urls:
     - https://github.com/meln5674/nexus-oidc-proxy/releases/download/nexus-oidc-proxy-v0.1.0/nexus-oidc-proxy-v0.1.0.tgz
     version: v0.1.0
-generated: "2022-08-11T23:25:00.392918805Z"
+  - apiVersion: v2
+    appVersion: 16ebdcdcd468728c63b68fd09f28f07d9dbf9828
+    created: "2022-08-11T23:43:23.519943481Z"
+    description: A Helm chart for Kubernetes
+    digest: 6709e6d05c08e53b5db707f3bc81aa5ed5572c0ddb34a7e7b068bacf20910e3a
+    name: nexus-oidc-proxy
+    type: application
+    urls:
+    - https://github.com/meln5674/nexus-oidc-proxy/releases/download/nexus-oidc-proxy-0.1.0-16ebdcdcd468728c63b68fd09f28f07d9dbf9828/nexus-oidc-proxy-0.1.0-16ebdcdcd468728c63b68fd09f28f07d9dbf9828.tgz
+    version: 0.1.0-16ebdcdcd468728c63b68fd09f28f07d9dbf9828
+generated: "2022-08-11T23:43:23.519954381Z"
