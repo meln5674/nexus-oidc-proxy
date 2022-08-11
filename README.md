@@ -2,7 +2,7 @@
 
 This server acts as a reverse proxy to add OIDC support to [Nexus](https://www.sonatype.com/products/nexus-repository). Nexus supports this directly by allowing a header to be set indicating the user ID to log in as, to be provided by a reverse proxy such as this one. A number of other open-source tools already do this, however, they only implement authentication, not authorization. This requires the administrator to manually manage the set of users, and their granted roles, manually, which defeats the purpose of single sign-on.
 
-This server is different, and instead intergates with OIDC in a way that will feel familiar to anyone that has used [Harbor](https://goharbor.io/). This tool assumes another tool like [OAuth2-Proxy](https://oauth2-proxy.github.io/oauth2-proxy/docs/) is reverse proxying it to provide it the SSO access token, and then, tranlate that token into a Nexus API User object, and synchronize the Nexus user automatically on a configurable interval, as well as creating the user in the first place, in addition to reverse proxying each request. This allows for true integration with OIDC.
+This server is different, and instead intergates with OIDC in a way that will feel familiar to anyone that has used [Harbor](https://goharbor.io/). This tool assumes another tool like [OAuth2-Proxy](https://oauth2-proxy.github.io/oauth2-proxy/docs/) is reverse proxying it to provide it the SSO access token, and then, translate that token into a Nexus API User object, and synchronize the Nexus user automatically on a configurable interval, as well as creating the user in the first place, in addition to reverse proxying each request. This allows for true integration with OIDC.
 
 # This tool is still in early development, and experimental. Everything is subject to change. Use at your own risk.
 
@@ -62,7 +62,7 @@ oidc:
   # You will have access to Sprig functions (https://masterminds.github.io/sprig/)
   # You will have access to https://pkg.go.dev/github.com/golang-jwt/jwt/v4#Token as the .Token variable
   # Outputs will be set unioned
-  rolesTemplate:
+  roleTemplates:
   - |-
     <template>
   - ...
