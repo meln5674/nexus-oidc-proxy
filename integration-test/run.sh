@@ -127,12 +127,15 @@ spec:
     secretRef:
       name: test-cert
   data:
-    ca.crt: |-
-     {{ index .References.testCert "ca.crt" | b64bin }}
-    keycloak-0.crt: |-
-     {{ index .References.testCert "tls.crt" | b64bin }}
-    keycloak-0.key: |-
-     {{ index .References.testCert "tls.key" | b64bin }}
+    ca.crt:
+      template: |-
+        {{ index .References.testCert "ca.crt" | b64bin }}
+    keycloak-0.crt: 
+      template: |-
+        {{ index .References.testCert "tls.crt" | b64bin }}
+    keycloak-0.key:
+      template: |-
+        {{ index .References.testCert "tls.key" | b64bin }}
   serviceAccountName: default
 EOF
 
@@ -144,6 +147,31 @@ INGRESS_NGINX_ARGS=(
 )
 
 helm upgrade --install --wait ingress-nginx ingress-nginx/ingress-nginx "${INGRESS_NGINX_ARGS[@]}"
+
+# Nginx doesn't like answer webhook requests right away for some reason
+while ! kubectl apply -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sentinel
+spec:
+  rules:
+  - host: example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: dummy
+            port:
+              number: 80
+EOF
+do
+    sleep 5
+done
+
+kubectl delete ingress sentinel
 
 NEXUS_ARGS=(
     --set fullnameOverride=nexus
@@ -187,6 +215,7 @@ NEXUS_OIDC_PROXY_ARGS=(
     --set credentials.existingSecret.name=nexus-userpass
     --set config.existingConfigMap.name=nexus-oidc-proxy
     --set image.pullPolicy=Never
+    --set image.repository=meln5674/nexus-oidc-proxy
     --set image.tag=${IMG_TAG}
 )
 
