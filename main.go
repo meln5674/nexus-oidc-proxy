@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/Masterminds/sprig/v3"
@@ -10,6 +12,7 @@ import (
 	flag "github.com/spf13/pflag"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -22,11 +25,63 @@ import (
 const (
 	NexusUsernameEnv = "NEXUS_OIDC_PROXY_NEXUS_USERNAME"
 	NexusPasswordEnv = "NEXUS_OIDC_PROXY_NEXUS_PASSWORD"
+
+	TokenPageStartFmt = `
+<!DOCTYPE html>
+<html>
+<body>
+
+<h2>Generate Token for User %s</h2>
+
+<form action="%s" method="post">
+  <input type="submit" value="Generate">
+</form>
+</body>
+</html>
+
+`
+
+	TokenPageSuccessFmt = `
+<!DOCTYPE html>
+<html>
+<body>
+
+<h2>Generate Token for User %s</h2>
+
+<form action="%s" method="post">
+  <input type="submit" value="Generate">
+</form>
+<br>
+Your new token is: %s
+<br>
+Please copy it, as you will not be able to see it again after closing this page.
+</body>
+</html>
+
+`
+
+	TokenPageFailureFmt = `
+<!DOCTYPE html>
+<html>
+<body>
+
+<h2>Generate Token for User %s</h2>
+
+<form action="%s" method="post">
+  <input type="submit" value="Generate">
+</form>
+<br>
+There was an error generating your new token. Your original token has not been changed. Contact an administrator.
+</body>
+</html>
+
+`
 )
 
 var (
-	ConfigPath     = flag.String("config", "./nexus-oidc-proxy.cfg", "Path to YAML/JSON formatted configuration file")
-	DefaultAddress = "127.0.0.1:8088"
+	ConfigPath          = flag.String("config", "./nexus-oidc-proxy.cfg", "Path to YAML/JSON formatted configuration file")
+	DefaultAddress      = "127.0.0.1:8088"
+	DefaultDefaultRoles = []string{"nx-anonymous"}
 )
 
 type URL struct {
@@ -70,6 +125,7 @@ type ProxyOIDCConfig struct {
 	AccessTokenHeader string   `json:"accessTokenHeader"`
 	SyncInterval      Duration `json:"syncInterval"`
 	RoleTemplates     []string `json:"roleTemplates"`
+	DefaultRoles      []string `json:"defaultRoles"`
 	UserTemplate      string   `json:"userTemplate"`
 	WellKnownURL      URL      `json:"wellKnownURL"`
 }
@@ -79,7 +135,12 @@ type ProxyNexusConfig struct {
 }
 
 type ProxyHTTPConfig struct {
-	Address string `json:"address"`
+	Address       string                    `json:"address"`
+	TokenEndpoint *ProxyTokenEndpointConfig `json:"tokenEndpoint"`
+}
+
+type ProxyTokenEndpointConfig struct {
+	Path string `json:"path"`
 }
 
 type ProxyTLSConfig struct {
@@ -108,7 +169,8 @@ type ProxyState struct {
 	Config       *ProxyConfig
 	Credentials  *ProxyCredentials
 	LastUserSync map[string]time.Time
-	ReverseProxy httputil.ReverseProxy
+	httputil.ReverseProxy
+	*http.ServeMux
 }
 
 func NewProxy(config ProxyConfig, credentials ProxyCredentials) (*ProxyState, error) {
@@ -120,6 +182,14 @@ func NewProxy(config ProxyConfig, credentials ProxyCredentials) (*ProxyState, er
 	state.ReverseProxy.Director = state.Director
 	state.ReverseProxy.ModifyResponse = state.ModifyResponse
 	state.ReverseProxy.ErrorLog = log.Default()
+	state.ServeMux = http.NewServeMux()
+	if config.HTTP.TokenEndpoint != nil {
+		if config.HTTP.TokenEndpoint.Path == "" {
+			return nil, fmt.Errorf("Invalid token endpoint path: %s", config.HTTP.TokenEndpoint.Path)
+		}
+		state.ServeMux.HandleFunc(config.HTTP.TokenEndpoint.Path, state.TokenEndpoint)
+	}
+	state.ServeMux.Handle("/", &state.ReverseProxy)
 	return state, nil
 }
 
@@ -161,6 +231,12 @@ func (p *ProxyState) GetOnboardedUser(token *jwt.Token) (*NexusUser, error) {
 	if err != nil {
 		return nil, err
 	}
+	if user.UserID == "" {
+		return nil, fmt.Errorf("UserID cannot be empty: %#v", user)
+	}
+	if len(user.Roles) == 0 {
+		copy(user.Roles, p.Config.OIDC.DefaultRoles)
+	}
 	return &user, nil
 }
 
@@ -190,6 +266,9 @@ func (p *ProxyState) GetDesiredUserRoles(token *jwt.Token) ([]string, error) {
 	roles := make([]string, 0, len(roleSet))
 	for role := range roleSet {
 		roles = append(roles, role)
+	}
+	if len(roles) == 0 {
+		copy(roles, p.Config.OIDC.DefaultRoles)
 	}
 
 	return roles, nil
@@ -284,33 +363,59 @@ func (p *ProxyState) UpdateUser(user *NexusUser) error {
 	return nil
 }
 
-func (p *ProxyState) Director(r *http.Request) {
-	incomingURL := *r.URL
-	*r.URL = p.Config.Nexus.Upstream.Inner
-	r.URL.Path += incomingURL.Path
-	defer log.Println(r)
+func (p *ProxyState) ChangePassword(userID, password string) error {
+	changePasswordURL := p.Config.Nexus.Upstream.Inner
+	changePasswordURL.Path = fmt.Sprintf("%s/service/rest/v1/security/users/%s/change-password", changePasswordURL.Path, userID)
+	req, err := http.NewRequest(http.MethodPut, changePasswordURL.String(), strings.NewReader(password))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "text/plain")
+	req.SetBasicAuth(p.Credentials.Nexus.Username, p.Credentials.Nexus.Password)
+	resp, err := http.DefaultClient.Do(req) // TODO: Will we ever need to use a different client?
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			body = []byte(fmt.Sprintf("<Failed to read response body: %s>", err))
+		}
+		if len(body) == 0 {
+			body = []byte("<No body>")
+		}
+		return fmt.Errorf("%s: %s", resp.Status, string(body))
+	}
+	return nil
+}
 
+func (p *ProxyState) ExtractClaims(r *http.Request) (token *jwt.Token, err error) {
 	rawToken, ok := r.Header[p.Config.OIDC.AccessTokenHeader]
 	if !ok || len(rawToken) == 0 {
-		log.Printf("No access token present (%s)", p.Config.OIDC.AccessTokenHeader)
+		err = fmt.Errorf("No access token present (%s)", p.Config.OIDC.AccessTokenHeader)
 		return
 	}
 	//token, err := jwt.NewParser().Parse(rawToken[0], func(token *jwt.Token) (interface{}, error) { return token, nil })
 	claims := make(jwt.MapClaims)
 	// TODO: Deal with signature
-	token, _, err := jwt.NewParser().ParseUnverified(rawToken[0], claims)
+	token, _, err = jwt.NewParser().ParseUnverified(rawToken[0], claims)
+	return
+}
+
+func (p *ProxyState) Director(r *http.Request) {
+	incomingURL := *r.URL
+	*r.URL = p.Config.Nexus.Upstream.Inner
+	r.URL.Path += incomingURL.Path
+	defer log.Println(r)
+	token, err := p.ExtractClaims(r)
 	if err != nil {
-		log.Println(err)
+		log.Printf("Failed to extract claims: %s", err)
 		return
 	}
 	log.Printf("Got token %#v\n", token)
 	onboardedUser, err := p.GetOnboardedUser(token)
 	if err != nil {
 		log.Println(err)
-		return
-	}
-	if onboardedUser.UserID == "" {
-		log.Printf("UserID cannot be empty, skipping rbac check: %#v\n", onboardedUser)
 		return
 	}
 	existingUser, found, err := p.GetUser(onboardedUser.UserID)
@@ -360,8 +465,64 @@ func (p *ProxyState) ModifyResponse(resp *http.Response) error {
 	return nil
 }
 
+func (p *ProxyState) TokenEndpoint(w http.ResponseWriter, r *http.Request) {
+	claims, err := p.ExtractClaims(r)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	onboardedUser, err := p.GetOnboardedUser(claims)
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("An error occured while generating your token. Contact an administrator"))
+		return
+	}
+
+	if onboardedUser.UserID == "" {
+		log.Printf("UserID cannot be empty, not setting a token: %#v\n", onboardedUser)
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("You don't appear to be logged in or a valid user. Contact an Administrator"))
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		w.Write([]byte(fmt.Sprintf(TokenPageStartFmt, onboardedUser.UserID, p.Config.HTTP.TokenEndpoint.Path)))
+	case http.MethodPost:
+		randBytes := make([]byte, 1024) // TODO: Will we every need more entropy than this?
+		_, err := rand.Read(randBytes)
+		if err != nil { // This technically should never happen, but better safe than sorry
+			log.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("An error occured while generating your token. Contact an administrator"))
+			return
+		}
+
+		hash := sha256.New()
+		hash.Write(randBytes)
+		digest := hash.Sum(make([]byte, 0))
+		newPassword := base64.StdEncoding.EncodeToString(digest)
+
+		err = p.ChangePassword(onboardedUser.UserID, newPassword)
+		if err != nil {
+			log.Printf("Failed to set user password: %s", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(fmt.Sprintf(TokenPageFailureFmt, onboardedUser.UserID, p.Config.HTTP.TokenEndpoint.Path)))
+			return
+		}
+		w.Write([]byte(fmt.Sprintf(TokenPageSuccessFmt, onboardedUser.UserID, p.Config.HTTP.TokenEndpoint.Path, newPassword)))
+		return
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+
+	}
+
+}
+
 func (p *ProxyState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	p.ReverseProxy.ServeHTTP(w, r)
+	p.ServeMux.ServeHTTP(w, r)
 }
 
 func (p *ProxyState) ListenAndServe() error {
@@ -403,6 +564,18 @@ func main() {
 			Username: os.Getenv(NexusUsernameEnv),
 			Password: os.Getenv(NexusPasswordEnv),
 		},
+	}
+
+	if len(config.OIDC.DefaultRoles) == 0 {
+		copy(config.OIDC.DefaultRoles, DefaultDefaultRoles)
+	}
+
+	if config.Nexus.RUTAuthHeader == "" {
+		log.Fatal("Must set nexus.ruthAuthHeader")
+	}
+
+	if config.OIDC.AccessTokenHeader == "" {
+		log.Fatal("Must set oidc.accessTokenHeader")
 	}
 
 	proxy, err := NewProxy(config, credentials)
