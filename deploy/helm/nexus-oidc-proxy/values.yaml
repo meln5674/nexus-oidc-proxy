@@ -89,7 +89,43 @@ config:
   # Embedded nexus-oidc-proxy.cfg
   yaml:
     http:
+      # Listen on port 8080, all available interfaces
       address: 0.0.0.0:8080
+      # tokenEndpoint:
+      #  path: /token
+    nexus:
+      # Assumes you have deployed https://github.com/sonatype/helm3-charts/ in the same namespace
+      upstream: http://nexus-repository-manager:8081
+      # Replace with whatever you set under System > Capabilities
+      rutAuthHeader: X-SSO-User
+    oidc:
+      # Assumes you're using https://github.com/oauth2-proxy/oauth2-proxy
+      accessTokenHeader: X-Forwarded-Access-Token
+      syncInterval: 5m
+      # Assumes you're using Keycloak, generates a random password on first login
+      userTemplate: |-
+        userId: '{{ .Token.Claims.preferred_username }}'
+        firstName: '{{ .Token.Claims.given_name }}'
+        lastName: '{{ .Token.Claims.family_name }}'
+        emailAddress: '{{ .Token.Claims.email }}'
+        password: '{{ randBytes 64 | b64enc }}'
+        status: 'active'
+        roles: ['nx-anonymous']
+      # Give a user any Kecloak realm_roles that start with nx-
+      # Replace this with whatever rules your organization has
+      roleTemplates:
+      - |-
+        {{- with .Token.Claims.realm_access }}
+        {{- with .roles }}
+        {{- range .Token.Claims.realm_access.roles }}
+        {{- if hasPrefix "nx-" . }}
+        - {{ . }}
+        {{- end }}
+        {{- end }}
+        {{- end }}
+        {{- end }}
+      defaultRoles:
+      - nx-anonymous
 
 credentials:
   # Reference to secret containing credentials
