@@ -19,6 +19,12 @@ spec:
       {{- end }}
       labels:
         {{- include "nexus-oidc-proxy.selectorLabels" . | nindent 8 }}
+        {{- if not .Values.credentials.existingSecret.name }}
+        nexus-oidc-proxy/secret-hash: {{ include "nexus-oidc-proxy.secretContents" . | adler32sum }}
+        {{- end }}
+        {{- if not .Values.config.existingConfigMap.name }}
+        nexus-oidc-proxy/configmap-hash: {{ include "nexus-oidc-proxy.configMapContents" . | adler32sum }}
+        {{- end }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
