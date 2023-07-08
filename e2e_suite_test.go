@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -76,6 +77,7 @@ var _ = BeforeSuite(func(ctx context.Context) {
 	gk8s.Options(gingk8s.SuiteOpts{
 		NoSuiteCleanup: true,
 	})
+
 	gk8s.Setup(ctx)
 
 	clusterCA := gk8s.KubectlReturnSecretValue(ctx, &cluster, "test-cert", "tls.crt")
@@ -96,84 +98,12 @@ var _ = BeforeSuite(func(ctx context.Context) {
 		},
 	}
 
-	var nexusAdminPassword string
 	Expect(gk8s.KubectlExec(ctx, &cluster, "deployment/nexus", "cat", []string{"/nexus-data/admin.password"}).WithStreams(gosh.FuncOut(gosh.SaveString(&nexusAdminPassword))).Run()).To(Succeed())
 
-	var r *http.Request
-	for _, user := range testUsers {
-		r, err = http.NewRequest(http.MethodGet, fmt.Sprintf("http://nexus:8081/service/rest/v1/security/users?userId=%v", user["userId"]), nil)
-		Expect(err).ToNot(HaveOccurred())
-		r.SetBasicAuth("admin", nexusAdminPassword)
-		GinkgoWriter.Printf("%s %s\n", r.Method, r.URL.String())
-		resp, err := clusterClient.Do(r)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(resp.StatusCode).To(Equal(http.StatusOK))
-		var matchingUsers []interface{}
-		Expect(json.NewDecoder(resp.Body).Decode(&matchingUsers)).To(Succeed())
-		buf := bytes.NewBuffer(make([]byte, 0))
-		if len(matchingUsers) == 0 {
-			Expect(json.NewEncoder(buf).Encode(user)).To(Succeed())
-			r, err = http.NewRequest(http.MethodPost, "http://nexus:8081/service/rest/v1/security/users", buf)
+	nexusRequest(http.MethodPut, "/service/rest/v1/security/anonymous", &map[string]interface{}{"enabled": false}, nil)
 
-		} else {
-			userReq := make(map[string]interface{}, len(user)+1)
-			for k, v := range user {
-				userReq[k] = v
-			}
-			userReq["source"] = "default"
-
-			Expect(json.NewEncoder(buf).Encode(userReq)).To(Succeed())
-			r, err = http.NewRequest(http.MethodPut, fmt.Sprintf("http://nexus:8081/service/rest/v1/security/users/%s", user["userId"]), buf)
-		}
-		Expect(err).ToNot(HaveOccurred())
-		GinkgoWriter.Printf("%s %s %s\n", r.Method, r.URL.String(), buf.String())
-		r.SetBasicAuth("admin", nexusAdminPassword)
-		r.Header.Set("content-type", "application/json")
-		resp, err = clusterClient.Do(r)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(resp.StatusCode).To(BeElementOf(http.StatusOK, http.StatusNoContent))
-	}
-
-	for _, role := range testRoles {
-		r, err = http.NewRequest(http.MethodGet, fmt.Sprintf("http://nexus:8081/service/rest/v1/security/roles/%v", role["id"]), nil)
-		Expect(err).ToNot(HaveOccurred())
-		r.SetBasicAuth("admin", nexusAdminPassword)
-		GinkgoWriter.Printf("%s %s\n", r.Method, r.URL.String())
-		resp, err := clusterClient.Do(r)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(resp.StatusCode).To(BeElementOf(http.StatusOK, http.StatusNotFound))
-		buf := bytes.NewBuffer(make([]byte, 0))
-		if resp.StatusCode == http.StatusNotFound {
-			Expect(json.NewEncoder(buf).Encode(role)).To(Succeed())
-			r, err = http.NewRequest(http.MethodPost, "http://nexus:8081/service/rest/v1/security/roles", buf)
-
-		} else {
-			roleReq := make(map[string]interface{}, len(role)+1)
-			for k, v := range role {
-				roleReq[k] = v
-			}
-			roleReq["source"] = "default"
-
-			Expect(json.NewEncoder(buf).Encode(roleReq)).To(Succeed())
-			r, err = http.NewRequest(http.MethodPut, fmt.Sprintf("http://nexus:8081/service/rest/v1/security/roles/%s", role["id"]), buf)
-		}
-		Expect(err).ToNot(HaveOccurred())
-		GinkgoWriter.Printf("%s %s %s\n", r.Method, r.URL.String(), buf.String())
-		r.SetBasicAuth("admin", nexusAdminPassword)
-		r.Header.Set("content-type", "application/json")
-		resp, err = clusterClient.Do(r)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(resp.StatusCode).To(BeElementOf(http.StatusOK, http.StatusNoContent))
-	}
-
-	r, err = http.NewRequest(http.MethodGet, "http://nexus:8081/service/rest/v1/security/realms/active", nil)
-	Expect(err).ToNot(HaveOccurred())
-	r.SetBasicAuth("admin", nexusAdminPassword)
-	resp, err := clusterClient.Do(r)
-	Expect(err).NotTo(HaveOccurred())
-	Expect(resp.StatusCode).To(Equal(http.StatusOK))
 	var activeRealms []string
-	Expect(json.NewDecoder(resp.Body).Decode(&activeRealms)).To(Succeed())
+	nexusRequest(http.MethodGet, "/service/rest/v1/security/realms/active", nil, &activeRealms)
 	active := false
 	for _, realm := range activeRealms {
 		if realm == "rutauth-realm" {
@@ -182,41 +112,21 @@ var _ = BeforeSuite(func(ctx context.Context) {
 		}
 	}
 	if !active {
-		activeRealms = append(activeRealms, "rutauth-realm")
-		buf := bytes.NewBuffer(make([]byte, 0))
-		Expect(json.NewEncoder(buf).Encode(activeRealms)).To(Succeed())
-		r, err = http.NewRequest(http.MethodPut, "http://nexus:8081/service/rest/v1/security/realms/active", buf)
-		Expect(err).ToNot(HaveOccurred())
-		r.SetBasicAuth("admin", nexusAdminPassword)
-		r.Header.Set("content-type", "application/json")
-		resp, err := clusterClient.Do(r)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.StatusCode).To(BeElementOf(http.StatusOK, http.StatusNoContent))
+		nexusRequest(http.MethodPut, "/service/rest/v1/security/realms/active", activeRealms, nil)
 	}
 
-	r, err = http.NewRequest(http.MethodGet, "http://nexus:8081/service/rest/v1/script", nil)
-	Expect(err).ToNot(HaveOccurred())
-	r.SetBasicAuth("admin", nexusAdminPassword)
-	resp, err = clusterClient.Do(r)
-	Expect(err).ToNot(HaveOccurred())
-	Expect(resp.StatusCode).To(Equal(http.StatusOK))
 	var scripts []map[string]interface{}
-	Expect(json.NewDecoder(resp.Body).Decode(&scripts)).To(Succeed())
-	GinkgoWriter.Printf("Got scripts: %#v\n", scripts)
 	scriptExists := false
+	nexusRequest(http.MethodGet, "/service/rest/v1/script", nil, &scripts)
 	for _, script := range scripts {
 		if script["name"].(string) == "enable-rut-auth-capability" {
 			scriptExists = true
 			break
 		}
 	}
+
 	if scriptExists {
-		r, err = http.NewRequest(http.MethodDelete, "http://nexus:8081/service/rest/v1/script/enable-rut-auth-capability", nil)
-		Expect(err).ToNot(HaveOccurred())
-		r.SetBasicAuth("admin", nexusAdminPassword)
-		resp, err = clusterClient.Do(r)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(resp.StatusCode).To(BeElementOf(http.StatusOK, http.StatusNoContent))
+		nexusRequest(http.MethodDelete, "/service/rest/v1/script/enable-rut-auth-capability", nil, nil)
 	}
 
 	script := map[string]interface{}{
@@ -226,23 +136,95 @@ var _ = BeforeSuite(func(ctx context.Context) {
 	scriptContents, err := os.ReadFile("integration-test/enable-rut-auth.groovy")
 	Expect(err).ToNot(HaveOccurred())
 	script["content"] = string(scriptContents)
-	buf := bytes.NewBuffer(make([]byte, 0))
-	Expect(json.NewEncoder(buf).Encode(&script)).To(Succeed())
-	r, err = http.NewRequest(http.MethodPost, "http://nexus:8081/service/rest/v1/script", buf)
-	Expect(err).ToNot(HaveOccurred())
-	r.SetBasicAuth("admin", nexusAdminPassword)
-	r.Header.Set("content-type", "application/json")
-	resp, err = clusterClient.Do(r)
-	Expect(err).ToNot(HaveOccurred())
-	Expect(resp.StatusCode).To(BeElementOf(http.StatusOK, http.StatusNoContent))
+	nexusRequest(http.MethodPost, "/service/rest/v1/script", script, nil)
+	nexusRequest(http.MethodPost, "/service/rest/v1/script/enable-rut-auth-capability/run", &struct{}{}, nil)
 
-	r, err = http.NewRequest(http.MethodPost, "http://nexus:8081/service/rest/v1/script/enable-rut-auth-capability/run", bytes.NewBuffer([]byte("")))
-	Expect(err).ToNot(HaveOccurred())
-	r.SetBasicAuth("admin", nexusAdminPassword)
-	r.Header.Set("content-type", "text/plain")
-	resp, err = clusterClient.Do(r)
-	Expect(err).ToNot(HaveOccurred())
-	Expect(resp.StatusCode).To(BeElementOf(http.StatusOK, http.StatusNoContent))
+	var repos []map[string]interface{}
+	repo1Exists := false
+	repo2Exists := false
+	nexusRequest(http.MethodGet, "/service/rest/v1/repositories", nil, &repos)
+	for _, repo := range repos {
+		if repo["name"].(string) == "test-repo-1" {
+			repo1Exists = true
+		}
+		if repo["name"].(string) == "test-repo-2" {
+			repo2Exists = true
+		}
+		if repo1Exists && repo2Exists {
+			break
+		}
+	}
+	if !repo1Exists {
+		nexusRequest(http.MethodPost, "/service/rest/v1/repositories/raw/hosted", &map[string]interface{}{
+			"name":   "test-repo-1",
+			"online": true,
+			"storage": map[string]interface{}{
+				"blobStoreName":               "default",
+				"strictContentTypeValidation": true,
+				"writePolicy":                 "allow_once",
+			},
+			"cleanup": map[string]interface{}{
+				"policyNames": []string{},
+			},
+			"component": map[string]interface{}{
+				"proprietaryComponents": true,
+			},
+			"raw": map[string]interface{}{
+				"contentDisposition": "ATTACHMENT",
+			},
+		}, nil)
+	}
+	if !repo2Exists {
+		nexusRequest(http.MethodPost, "/service/rest/v1/repositories/raw/hosted", &map[string]interface{}{
+			"name":   "test-repo-2",
+			"online": true,
+			"storage": map[string]interface{}{
+				"blobStoreName":               "default",
+				"strictContentTypeValidation": true,
+				"writePolicy":                 "allow_once",
+			},
+			"cleanup": map[string]interface{}{
+				"policyNames": []string{},
+			},
+			"component": map[string]interface{}{
+				"proprietaryComponents": true,
+			},
+			"raw": map[string]interface{}{
+				"contentDisposition": "ATTACHMENT",
+			},
+		}, nil)
+	}
+
+	for _, role := range testRoles {
+		resp := nexusRequestWithResponse(http.MethodGet, fmt.Sprintf("/service/rest/v1/security/roles/%v", role["id"]), nil, nil)
+		if resp.StatusCode == http.StatusNotFound {
+			nexusRequest(http.MethodPost, "/service/rest/v1/security/roles", &role, nil)
+		} else {
+			roleReq := make(map[string]interface{}, len(role)+1)
+			for k, v := range role {
+				roleReq[k] = v
+			}
+			roleReq["source"] = "default"
+
+			nexusRequest(http.MethodPut, fmt.Sprintf("/service/rest/v1/security/roles/%v", role["id"]), &roleReq, nil)
+		}
+	}
+
+	for _, user := range testUsers {
+		var matchingUsers []interface{}
+		nexusRequest(http.MethodGet, fmt.Sprintf("/service/rest/v1/security/users?userId=%v", user["userId"]), nil, &matchingUsers)
+		if len(matchingUsers) == 0 {
+			nexusRequest(http.MethodPost, "/service/rest/v1/security/users", user, nil)
+		} else {
+			userReq := make(map[string]interface{}, len(user)+1)
+			for k, v := range user {
+				userReq[k] = v
+			}
+			userReq["source"] = "default"
+
+			nexusRequest(http.MethodPut, fmt.Sprintf("/service/rest/v1/security/users/%s", user["userId"]), &userReq, nil)
+		}
+	}
 
 	bopts := []chromedp.ExecAllocatorOption{
 		chromedp.ProxyServer("http://localhost:8080"),
@@ -257,7 +239,6 @@ var _ = BeforeSuite(func(ctx context.Context) {
 	biloba.SpinUpChrome(GinkgoT(), bopts...)
 	b = biloba.ConnectToChrome(GinkgoT())
 
-	// b.NavigateWithStatus("http://nexus.nexus-oidc-proxy-it.cluster", http.StatusForbidden)
 	keycloakLogin(true)
 })
 
@@ -509,8 +490,8 @@ var (
 		"NEXUS_REALM=integration-test",
 		"NEXUS_CLIENT_ID=nexus",
 		"NEXUS_CALLBACK_URL=https://nexus.nexus-oidc-proxy-it.cluster/oauth2/callback",
-		"CREATE_ROLES=role1",
-		"CREATE_USERS='user-1 user-1-password role1'",
+		"CREATE_ROLES='nx-role1 nx-role2'",
+		"CREATE_USERS='user-1 user-1-password nx-role1'",
 	))
 
 	oauth2ProxyConfig = gingk8s.KubernetesManifests{
@@ -567,8 +548,12 @@ var (
 	}
 
 	testRoles = []map[string]interface{}{
-		{"id": "role1", "name": "Role 1", "description": "Role 1", "privileges": []string{}, "roles": []string{}},
+		{"id": "nx-empty", "name": "Empty", "description": "No Permissions", "privileges": []string{}, "roles": []string{}},
+		{"id": "nx-role1", "name": "Role 1", "description": "Role 1", "privileges": []string{"nx-repository-view-raw-test-repo-1-browse"}, "roles": []string{}},
+		{"id": "nx-role2", "name": "Role 2", "description": "Role 2", "privileges": []string{"nx-repository-view-raw-test-repo-2-browse"}, "roles": []string{}},
 	}
+
+	nexusAdminPassword string
 )
 
 func getKeycloakClientSecret(clientID string) func(gingk8s.Gingk8s, context.Context, gingk8s.Cluster) (string, error) {
@@ -622,4 +607,37 @@ func keycloakLogin(needCredentials bool) {
 	}
 
 	Eventually(b.Location, "5s").Should(Equal(fmt.Sprintf("https://%s/", oauth2Proxy.Set["ingress.hostname"])))
+}
+
+func nexusRequestWithResponse(method string, path string, requestBody interface{}, responseBody interface{}) *http.Response {
+	GinkgoHelper()
+	var bodyReader io.Reader
+	buf := bytes.NewBuffer(make([]byte, 0))
+	if requestBody != nil {
+		Expect(json.NewEncoder(buf).Encode(requestBody)).To(Succeed())
+		bodyReader = buf
+	}
+	r, err := http.NewRequest(method, "http://nexus:8081"+path, bodyReader)
+	Expect(err).ToNot(HaveOccurred())
+	r.SetBasicAuth("admin", nexusAdminPassword)
+	if requestBody != nil {
+		r.Header.Set("content-type", "application/json")
+		GinkgoWriter.Printf("%s %s %s\n", r.Method, r.URL.String(), buf.String())
+	} else {
+		GinkgoWriter.Printf("%s %s\n", r.Method, r.URL.String())
+	}
+	resp, err := clusterClient.Do(r)
+	Expect(err).ToNot(HaveOccurred())
+	return resp
+}
+
+func nexusRequest(method string, path string, requestBody interface{}, responseBody interface{}) {
+	GinkgoHelper()
+	resp := nexusRequestWithResponse(method, path, requestBody, responseBody)
+	if responseBody == nil {
+		Expect(resp.StatusCode).To(BeElementOf(http.StatusOK, http.StatusCreated, http.StatusNoContent))
+	} else {
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		Expect(json.NewDecoder(resp.Body).Decode(responseBody)).To(Succeed())
+	}
 }
