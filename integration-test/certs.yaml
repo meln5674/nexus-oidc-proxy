@@ -1,0 +1,26 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned-issuer
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: test-cert
+spec:
+  commonName: test-cert
+  secretName: test-cert
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: selfsigned-issuer
+    kind: Issuer
+    group: cert-manager.io
+  dnsNames:
+  - '*.nexus-oidc-proxy-it.cluster'
+  - keycloak.default.svc.cluster.local
+  - keycloak-0.keycloak.default.svc.cluster.local
+  - keycloak-0
