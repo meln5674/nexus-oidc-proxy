@@ -46,35 +46,32 @@ var _ = BeforeSuite(func(ctx context.Context) {
 
 	gk8s.ClusterAction(clusterID, "Watch Pods", &watchPods)
 
-	/*
+	certManagerID := gk8s.Release(clusterID, &certManager, certManagerImageIDs)
 
-			certManagerID := gk8s.Release(clusterID, &certManager, certManagerImageIDs)
+	certsID := gk8s.Manifests(clusterID, &certs, &certManagerID)
 
-			certsID := gk8s.Manifests(clusterID, &certs, &certManagerID)
+	ingressNginxID := gk8s.Release(clusterID, &ingressNginx, ingressNginxImageID, certsID)
 
-			ingressNginxID := gk8s.Release(clusterID, &ingressNginx, ingressNginxImageID, certsID)
+	gk8s.Release(clusterID, &kubeIngressProxy, ingressNginxID, kubeIngressProxyImageID)
 
-			gk8s.Release(clusterID, &kubeIngressProxy, ingressNginxID, kubeIngressProxyImageID)
+	// The nexus chart is broken, so we have to do the install/update in two phases
+	nexusID := gk8s.Release(clusterID, &nexus, ingressNginxID)
+	nexusID = gk8s.Release(clusterID, &nexusAgain, nexusID)
+	nexusAdminPasswordSecretID := gk8s.Manifests(clusterID, &nexusAdminPasswordSecret, nexusID)
 
-			// The nexus chart is broken, so we have to do the install/update in two phases
-			nexusID := gk8s.Release(clusterID, &nexus, ingressNginxID)
-			nexusID = gk8s.Release(clusterID, &nexusAgain, nexusID)
-			nexusAdminPasswordSecretID := gk8s.Manifests(clusterID, &nexusAdminPasswordSecret, nexusID)
+	nexusOIDCProxyConfigID := gk8s.Manifests(clusterID, &nexusOIDCProxyConfig)
+	nexusOIDCProxyID := gk8s.Release(clusterID, &nexusOIDCProxy, nexusOIDCProxyConfigID, nexusAdminPasswordSecretID)
 
-			nexusOIDCProxyConfigID := gk8s.Manifests(clusterID, &nexusOIDCProxyConfig)
-			nexusOIDCProxyID := gk8s.Release(clusterID, &nexusOIDCProxy, nexusOIDCProxyConfigID, nexusAdminPasswordSecretID)
+	keycloakID := gk8s.Release(clusterID, &keycloak, ingressNginxID)
+	keycloakSetupID := gk8s.ClusterAction(clusterID, "Configure Keycloak", keycloakSetup, keycloakID)
 
-			keycloakID := gk8s.Release(clusterID, &keycloak, ingressNginxID)
-			keycloakSetupID := gk8s.ClusterAction(clusterID, "Configure Keycloak", keycloakSetup, keycloakID)
+	oauth2ProxyConfigID := gk8s.Manifests(clusterID, &oauth2ProxyConfig)
+	oauth2ProxyID := gk8s.Release(clusterID, &oauth2Proxy, oauth2ProxyConfigID, keycloakSetupID)
 
-			oauth2ProxyConfigID := gk8s.Manifests(clusterID, &oauth2ProxyConfig)
-			oauth2ProxyID := gk8s.Release(clusterID, &oauth2Proxy, oauth2ProxyConfigID, keycloakSetupID)
-
-		_ = []gingk8s.ResourceDependency{
-			oauth2ProxyID,
-			nexusOIDCProxyID,
-		}
-	*/
+	_ = []gingk8s.ResourceDependency{
+		oauth2ProxyID,
+		nexusOIDCProxyID,
+	}
 
 	gk8s.Options(gingk8s.SuiteOpts{
 		NoSuiteCleanup: true,

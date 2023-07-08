@@ -91,7 +91,7 @@ function ensure-user {
                 -s username="${username}" \
                 -s email="${username}@example.com" \
                 -s emailVerified=true \
-                -s credentials='[{"type": "password", "value": "test", "temporary": false}]' \
+                -s credentials='[{"type": "password", "value": "'"${password}"'", "temporary": false}]' \
                 -s enabled=true
         )
     else

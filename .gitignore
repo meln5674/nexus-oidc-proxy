@@ -5,3 +5,4 @@ integration-test/kind.config
 integration-test/kubeconfig
 integration-test/groups
 integration-test/images
+bin/
