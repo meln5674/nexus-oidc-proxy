@@ -1,10 +1,10 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
-name: meln5674-mongodb-community-it
+name: nexus-oidc-proxy-it
 nodes:
 - role: control-plane
   extraMounts:
-  - hostPath: 
+  - hostPath: {{ .Pwd }}
     containerPath: /mnt/host/nexus-oidc-proxy
   extraPortMappings:
   - containerPort: 80
@@ -12,4 +12,7 @@ nodes:
     listenAddress: "127.0.0.1"
   - containerPort: 443
     hostPort: 443
+    listenAddress: "127.0.0.1"
+  - containerPort: 8080
+    hostPort: 8080
     listenAddress: "127.0.0.1"
