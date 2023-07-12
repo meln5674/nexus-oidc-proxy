@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -169,7 +170,7 @@ type ProxyCredentials struct {
 type ProxyState struct {
 	Config      *ProxyConfig
 	Credentials *ProxyCredentials
-	UsersCache  map[string]UserCacheEntry
+	UsersCache  sync.Map
 	httputil.ReverseProxy
 	*http.ServeMux
 }
@@ -184,19 +185,18 @@ func NewProxy(config ProxyConfig, credentials ProxyCredentials) (*ProxyState, er
 	state := &ProxyState{
 		Config:      &config,
 		Credentials: &credentials,
-		UsersCache:  make(map[string]UserCacheEntry),
 	}
 	users, err := state.GetUsers(nil)
 	if err != nil {
 		log.Printf("Error while warming up users cache: %s. Starting with empty cache", err)
 	} else {
 		for _, user := range users {
-			state.UsersCache[user.UserID] = UserCacheEntry{
+			state.UsersCache.Store(user.UserID, UserCacheEntry{
 				User:     &user,
 				LastSync: time.Now(),
-			}
+			})
 		}
-		log.Printf("Saved %d users in local cache\n", len(state.UsersCache))
+		log.Printf("Saved %d users in local cache\n", len(users))
 	}
 	state.ReverseProxy.Director = state.Director
 	state.ReverseProxy.ModifyResponse = state.ModifyResponse
@@ -454,7 +454,11 @@ func (p *ProxyState) Director(r *http.Request) {
 	}
 	var existingUser *NexusUser
 	var found bool
-	cachedUser, exists := p.UsersCache[onboardedUser.UserID]
+	var cachedUser UserCacheEntry
+	cachedValue, exists := p.UsersCache.Load(onboardedUser.UserID)
+	if exists {
+		cachedUser = cachedValue.(UserCacheEntry)
+	}
 	// If user in cache and recently updated, use cached user
 	if exists && time.Now().Before(cachedUser.LastSync.Add(p.Config.OIDC.SyncInterval.Inner)) {
 		existingUser = cachedUser.User
@@ -473,7 +477,7 @@ func (p *ProxyState) Director(r *http.Request) {
 	}
 	if !found {
 		// If user doesn't exist ensure we are not caching invalid data
-		delete(p.UsersCache, onboardedUser.UserID)
+		p.UsersCache.Delete(onboardedUser.UserID)
 		err = p.CreateUser(onboardedUser)
 		if err != nil {
 			log.Println(err)
@@ -492,7 +496,7 @@ func (p *ProxyState) Director(r *http.Request) {
 	}
 	// Update user information in case user is just created or refreshed from nexus server
 	cachedUser.User = existingUser
-	p.UsersCache[onboardedUser.UserID] = cachedUser
+	p.UsersCache.Store(onboardedUser.UserID, cachedUser)
 
 	r.Header.Add(p.Config.Nexus.RUTAuthHeader, existingUser.UserID)
 	lastSync := cachedUser.RolesLastSync
@@ -513,7 +517,7 @@ func (p *ProxyState) Director(r *http.Request) {
 		return
 	}
 	cachedUser.RolesLastSync = time.Now()
-	p.UsersCache[existingUser.UserID] = cachedUser
+	p.UsersCache.Store(existingUser.UserID, cachedUser)
 }
 
 func (p *ProxyState) ModifyResponse(resp *http.Response) error {
