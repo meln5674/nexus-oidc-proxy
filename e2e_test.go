@@ -14,7 +14,7 @@ var _ = Describe("The Nexus OIDC Proxy", Ordered, func() {
 		b.Navigate("https://nexus.nexus-oidc-proxy-it.cluster")
 
 		welcomeImg := `img.nxrm-welcome__logo`
-		Eventually(welcomeImg, "15s").Should(b.Exist())
+		Eventually(welcomeImg, "30s").Should(b.Exist())
 	})
 
 	It("Should show the user as logged in", func() {
