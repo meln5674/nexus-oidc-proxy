@@ -188,15 +188,16 @@ func NewProxy(config ProxyConfig, credentials ProxyCredentials) (*ProxyState, er
 	}
 	users, err := state.GetUsers(nil)
 	if err != nil {
-		return nil, fmt.Errorf("Error while warming up users cache: %s", err)
-	}
-	for _, user := range users {
-		state.UsersCache[user.UserID] = UserCacheEntry{
-			User:     &user,
-			LastSync: time.Now(),
+		log.Printf("Error while warming up users cache: %s. Starting with empty cache", err)
+	} else {
+		for _, user := range users {
+			state.UsersCache[user.UserID] = UserCacheEntry{
+				User:     &user,
+				LastSync: time.Now(),
+			}
 		}
+		log.Printf("Saved %d users in local cache\n", len(state.UsersCache))
 	}
-	log.Printf("Saved %d users in local cache\n", len(state.UsersCache))
 	state.ReverseProxy.Director = state.Director
 	state.ReverseProxy.ModifyResponse = state.ModifyResponse
 	state.ReverseProxy.ErrorLog = log.Default()
