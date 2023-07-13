@@ -212,18 +212,6 @@ func NewProxy(config ProxyConfig, credentials ProxyCredentials) (*ProxyState, er
 		log.Printf("Saved %d users in local cache\n", len(users))
 	}
 
-	users, err := state.GetUsers(nil)
-	if err != nil {
-		log.Warnf("Error while warming up users cache: %s. Starting with empty cache", err)
-	} else {
-		for _, user := range users {
-			state.UsersCache.Store(user.UserID, UserCacheEntry{
-				User:     &user,
-				LastSync: time.Now(),
-			})
-		}
-		log.Infof("Saved %d users in local cache\n", len(users))
-	}
 	w := log.New().Writer()
 	defer w.Close()
 
