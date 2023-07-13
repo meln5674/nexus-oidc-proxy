@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
+	stdlog "log"
 	"math/rand"
 	"net/http"
 	"net/http/httputil"
@@ -21,8 +21,20 @@ import (
 	"github.com/Masterminds/sprig/v3"
 	"github.com/aquasecurity/yaml"
 	jwt "github.com/golang-jwt/jwt/v4"
+	log "github.com/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
+	"github.com/thediveo/enumflag/v2"
 )
+
+var LoglevelIds = map[log.Level][]string{
+	log.TraceLevel: {"trace"},
+	log.DebugLevel: {"debug"},
+	log.InfoLevel:  {"info"},
+	log.WarnLevel:  {"warning", "warn"},
+	log.ErrorLevel: {"error"},
+	log.FatalLevel: {"fatal"},
+	log.PanicLevel: {"panic"},
+}
 
 const (
 	NexusUsernameEnv = "NEXUS_OIDC_PROXY_NEXUS_USERNAME"
@@ -54,7 +66,7 @@ const (
   <input type="submit" value="Generate">
 </form>
 <br>
-Your new token is: %s
+Your new token is: <code style="background-color:#cecece">%s</code>
 <br>
 Please copy it, as you will not be able to see it again after closing this page.
 </body>
@@ -82,6 +94,7 @@ There was an error generating your new token. Your original token has not been c
 
 var (
 	ConfigPath          = flag.String("config", "./nexus-oidc-proxy.cfg", "Path to YAML/JSON formatted configuration file")
+	LogLevel            = log.InfoLevel
 	DefaultAddress      = "127.0.0.1:8088"
 	DefaultDefaultRoles = []string{"nx-anonymous"}
 )
@@ -96,7 +109,7 @@ func (u *URL) UnmarshalJSON(bytes []byte) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(s)
+	log.Debug(s)
 	maybeURL, err := url.Parse(s)
 	if err != nil {
 		return err
@@ -115,7 +128,7 @@ func (d *Duration) UnmarshalJSON(bytes []byte) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(s)
+	log.Debug(s)
 	d.Inner, err = time.ParseDuration(s)
 	if err != nil {
 		return err
@@ -198,9 +211,25 @@ func NewProxy(config ProxyConfig, credentials ProxyCredentials) (*ProxyState, er
 		}
 		log.Printf("Saved %d users in local cache\n", len(users))
 	}
+
+	users, err := state.GetUsers(nil)
+	if err != nil {
+		log.Warnf("Error while warming up users cache: %s. Starting with empty cache", err)
+	} else {
+		for _, user := range users {
+			state.UsersCache.Store(user.UserID, UserCacheEntry{
+				User:     &user,
+				LastSync: time.Now(),
+			})
+		}
+		log.Infof("Saved %d users in local cache\n", len(users))
+	}
+	w := log.New().Writer()
+	defer w.Close()
+
 	state.ReverseProxy.Director = state.Director
 	state.ReverseProxy.ModifyResponse = state.ModifyResponse
-	state.ReverseProxy.ErrorLog = log.Default()
+	state.ReverseProxy.ErrorLog = stdlog.New(w, "", 0)
 	state.ServeMux = http.NewServeMux()
 	if config.HTTP.TokenEndpoint != nil {
 		if config.HTTP.TokenEndpoint.Path == "" {
@@ -244,7 +273,7 @@ func (p *ProxyState) GetOnboardedUser(token *jwt.Token) (*NexusUser, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("User template output: %s\n", output.String())
+	log.Debugf("User template output: %s\n", output.String())
 	user := NexusUser{}
 	err = yaml.Unmarshal([]byte(output.String()), &user)
 	if err != nil {
@@ -356,7 +385,8 @@ func (p *ProxyState) CreateUser(user *NexusUser) error {
 		return err
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
+	// 200 <= result < 300
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		body, _ := ioutil.ReadAll(res.Body)
 		return fmt.Errorf("POST %s: %s - %s", &postUser, res.Status, string(body))
 	}
@@ -376,8 +406,8 @@ func (p *ProxyState) UpdateUser(user *NexusUser) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(userUpdate)
-	fmt.Println(string(userBytes))
+	log.Debug(userUpdate)
+	log.Debug(string(userBytes))
 	req, err := http.NewRequest(http.MethodPut, putUser.String(), ioutil.NopCloser(bytes.NewReader(userBytes)))
 	if err != nil {
 		return err
@@ -440,16 +470,16 @@ func (p *ProxyState) Director(r *http.Request) {
 	r.URL.Host = p.Config.Nexus.Upstream.Inner.Host
 	r.URL.Scheme = p.Config.Nexus.Upstream.Inner.Scheme
 	r.URL.Path = p.Config.Nexus.Upstream.Inner.Path + incomingURL.Path
-	defer log.Println(r)
+	defer log.Debug(r)
 	token, err := p.ExtractClaims(r)
 	if err != nil {
-		log.Printf("Failed to extract claims: %s", err)
+		log.Errorf("Failed to extract claims: %s", err)
 		return
 	}
-	log.Printf("Got token %#v\n", token)
+	log.Debugf("Got token %#v\n", token)
 	onboardedUser, err := p.GetOnboardedUser(token)
 	if err != nil {
-		log.Println(err)
+		log.Error(err)
 		return
 	}
 	var existingUser *NexusUser
@@ -463,12 +493,12 @@ func (p *ProxyState) Director(r *http.Request) {
 	if exists && time.Now().Before(cachedUser.LastSync.Add(p.Config.OIDC.SyncInterval.Inner)) {
 		existingUser = cachedUser.User
 		found = true
-		log.Printf("Found user %s in local cache and in-sync\n", existingUser.UserID)
+		log.Infof("Found user %s in local cache and in-sync\n", existingUser.UserID)
 		// Else retrieve user from nexus server
 	} else {
 		existingUser, found, err = p.GetUser(onboardedUser.UserID)
 		if err != nil {
-			log.Println(err)
+			log.Errorf("Error while fetching user from Nexus: %s", err)
 			return
 		}
 		if found {
@@ -480,16 +510,16 @@ func (p *ProxyState) Director(r *http.Request) {
 		p.UsersCache.Delete(onboardedUser.UserID)
 		err = p.CreateUser(onboardedUser)
 		if err != nil {
-			log.Println(err)
+			log.Error(err)
 			return
 		}
 		existingUser, found, err = p.GetUser(onboardedUser.UserID)
 		if err != nil {
-			log.Println(err)
+			log.Error(err)
 			return
 		}
 		if !found {
-			log.Printf("User %s did not exist after creation?\n", onboardedUser.UserID)
+			log.Warnf("User %s did not exist after creation?\n", onboardedUser.UserID)
 			return
 		}
 		cachedUser.LastSync = time.Now()
@@ -500,20 +530,21 @@ func (p *ProxyState) Director(r *http.Request) {
 
 	r.Header.Add(p.Config.Nexus.RUTAuthHeader, existingUser.UserID)
 	lastSync := cachedUser.RolesLastSync
+	log.Debugf("User roles %s last synced at %v", existingUser.UserID, lastSync)
 	if time.Now().Before(lastSync.Add(p.Config.OIDC.SyncInterval.Inner)) {
 		return
 	}
-	fmt.Println("Sync period has expired, syncing roles")
+	log.Info("Sync period has expired, syncing roles")
 	roles, err := p.GetDesiredUserRoles(token)
 	if err != nil {
-		log.Println(err)
+		log.Error(err)
 		return
 	}
 	existingUser.Roles = roles
-	fmt.Printf("New User: %#v\n", existingUser)
+	log.Debugf("New User: %#v\n", existingUser)
 	err = p.UpdateUser(existingUser)
 	if err != nil {
-		log.Println(err)
+		log.Error(err)
 		return
 	}
 	cachedUser.RolesLastSync = time.Now()
@@ -521,7 +552,7 @@ func (p *ProxyState) Director(r *http.Request) {
 }
 
 func (p *ProxyState) ModifyResponse(resp *http.Response) error {
-	log.Println(resp)
+	log.Debug(resp)
 	return nil
 }
 
@@ -533,14 +564,14 @@ func (p *ProxyState) TokenEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	onboardedUser, err := p.GetOnboardedUser(claims)
 	if err != nil {
-		log.Println(err)
+		log.Error(err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("An error occured while generating your token. Contact an administrator"))
 		return
 	}
 
 	if onboardedUser.UserID == "" {
-		log.Printf("UserID cannot be empty, not setting a token: %#v\n", onboardedUser)
+		log.Warnf("UserID cannot be empty, not setting a token: %#v\n", onboardedUser)
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte("You don't appear to be logged in or a valid user. Contact an Administrator"))
 		return
@@ -552,7 +583,7 @@ func (p *ProxyState) TokenEndpoint(w http.ResponseWriter, r *http.Request) {
 		randBytes := make([]byte, 1024) // TODO: Will we every need more entropy than this?
 		_, err := rand.Read(randBytes)
 		if err != nil { // This technically should never happen, but better safe than sorry
-			log.Println(err)
+			log.Error(err)
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte("An error occured while generating your token. Contact an administrator"))
 			return
@@ -565,7 +596,7 @@ func (p *ProxyState) TokenEndpoint(w http.ResponseWriter, r *http.Request) {
 
 		err = p.ChangePassword(onboardedUser.UserID, newPassword)
 		if err != nil {
-			log.Printf("Failed to set user password: %s", err)
+			log.Errorf("Failed to set user password: %s", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(fmt.Sprintf(TokenPageFailureFmt, onboardedUser.UserID, p.Config.HTTP.TokenEndpoint.Path)))
 			return
@@ -600,7 +631,14 @@ func (p *ProxyState) ListenAndServe() error {
 // This will allow users to set their internal nexus password, which should not be needed when accessing through the proxy, but if accessed through a second endpoint which bypasses the proxy, will act as a "token", rather than an SSO password, for example, in a maven settings.xml
 
 func main() {
+	flag.Var(
+		enumflag.New(&LogLevel, "log-level", LoglevelIds, enumflag.EnumCaseInsensitive),
+		"log-level",
+		"sets logging level; can be 'trace', 'debug', 'info', 'warn', 'error', 'fatal', 'panic'")
+
 	flag.Parse()
+
+	log.SetLevel(LogLevel)
 
 	configFile, err := os.Open(*ConfigPath)
 	if err != nil {
@@ -643,7 +681,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("Listening on %s\n", proxy.Config.HTTP.Address)
-	fmt.Printf("Proxying %s\n", proxy.Config.Nexus.Upstream.Inner.String())
+	log.Infof("Listening on %s", proxy.Config.HTTP.Address)
+	log.Infof("Proxying %s", proxy.Config.Nexus.Upstream.Inner.String())
 	log.Fatal(proxy.ListenAndServe())
 }

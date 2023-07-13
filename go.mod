@@ -3,21 +3,15 @@ module github.com/meln5674/nexus-oidc-proxy
 go 1.18
 
 require (
-	github.com/Masterminds/sprig/v3 v3.2.2
-	github.com/aquasecurity/yaml v0.0.0-20150909031657-73d445a93680
 	github.com/chromedp/chromedp v0.9.1
-	github.com/golang-jwt/jwt/v4 v4.4.2
 	github.com/meln5674/gingk8s v0.0.0-20230611210336-c12659e2fc26
 	github.com/meln5674/gosh v0.0.0-20230418002009-f731b8b62575
 	github.com/onsi/biloba v0.1.5
 	github.com/onsi/ginkgo/v2 v2.11.0
 	github.com/onsi/gomega v1.27.8
-	github.com/spf13/pflag v1.0.5
 )
 
 require (
-	github.com/Masterminds/goutils v1.1.1 // indirect
-	github.com/Masterminds/semver/v3 v3.1.1 // indirect
 	github.com/chromedp/cdproto v0.0.0-20230220211738-2b1ec77315c9 // indirect
 	github.com/chromedp/sysutil v1.0.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -38,21 +32,16 @@ require (
 	github.com/google/gofuzz v1.1.0 // indirect
 	github.com/google/pprof v0.0.0-20210720184732-4bb14d4b1be1 // indirect
 	github.com/google/uuid v1.3.0 // indirect
-	github.com/huandu/xstrings v1.3.1 // indirect
 	github.com/imdario/mergo v0.3.11 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/meln5674/godag v0.2.0 // indirect
-	github.com/mitchellh/copystructure v1.0.0 // indirect
-	github.com/mitchellh/reflectwalk v1.0.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/shopspring/decimal v1.2.0 // indirect
-	github.com/spf13/cast v1.3.1 // indirect
-	golang.org/x/crypto v0.1.0 // indirect
+	github.com/spf13/pflag v1.0.5 // indirect
 	golang.org/x/net v0.10.0 // indirect
 	golang.org/x/oauth2 v0.5.0 // indirect
 	golang.org/x/sys v0.9.0 // indirect
