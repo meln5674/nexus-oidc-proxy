@@ -315,10 +315,22 @@ func (p *ProxyState) GetUsers(userID *string) ([]NexusUser, error) {
 		body, _ := ioutil.ReadAll(res.Body)
 		return nil, fmt.Errorf("GET %s: %s - %s", &getUser, res.Status, string(body))
 	}
-	result := make([]NexusUser, 0, 1)
-	err = json.NewDecoder(res.Body).Decode(&result)
+	tmpResult := make([]NexusUser, 0, 1)
+	err = json.NewDecoder(res.Body).Decode(&tmpResult)
 	if err != nil {
 		return nil, err
+	}
+	// Nexus API filters results by prefix instead of exact match
+	// This ensures that the user returned is the user requested by userID variable
+	result := make([]NexusUser, 0, 1)
+	if userID != nil {
+		for _, user := range tmpResult {
+			if user.UserID == *userID {
+				result = append(result, user)
+			}
+		}
+	} else {
+		result = tmpResult
 	}
 	if len(result) == 0 {
 		return nil, nil
