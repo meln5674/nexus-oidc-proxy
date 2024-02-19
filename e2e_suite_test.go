@@ -545,6 +545,7 @@ var (
 
 	testUsers = []map[string]interface{}{
 		{"userId": "user1", "firstName": "user", "lastName": "one", "emailAddress": "user1@example.com", "status": "active", "roles": []string{"nx-anonymous"}, "password": "user1Password"},
+		{"userId": "user12", "firstName": "user", "lastName": "one", "emailAddress": "user12@example.com", "status": "active", "roles": []string{"nx-anonymous"}, "password": "user12Password"},
 	}
 
 	testRoles = []map[string]interface{}{
