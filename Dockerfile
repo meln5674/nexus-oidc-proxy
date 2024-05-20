@@ -3,6 +3,7 @@ FROM golang:1.18 AS build
 WORKDIR /usr/src/nexus-oidc-proxy
 
 COPY main.go go.mod go.sum ./
+COPY pkg ./pkg
 
 RUN GCO_ENABLED=0 GOOS=linux go build -a -ldflags="-w -extldflags "-static"" -tags netgo main.go
 
