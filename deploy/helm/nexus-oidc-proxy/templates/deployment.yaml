@@ -39,6 +39,9 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+          - --config=/etc/nexus-oidc-proxy/nexus-oidc-proxy.cfg
+          - --log-level={{ .Values.logLevel }}
           env:
           - name: NEXUS_OIDC_PROXY_NEXUS_USERNAME
             valueFrom:

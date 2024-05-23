@@ -81,6 +81,8 @@ tolerations: []
 
 affinity: {}
 
+logLevel: info
+
 config:
   # Reference to configmap containing config file
   existingConfigMap:
@@ -101,6 +103,9 @@ config:
     oidc:
       # Assumes you're using https://github.com/oauth2-proxy/oauth2-proxy
       accessTokenHeader: X-Forwarded-Access-Token
+      # If true, remove the token header when forwarding the request to nexus
+      stripHeader: false
+      # How often to check for differences in user roles
       syncInterval: 5m
       # Assumes you're using Keycloak, generates a random password on first login
       userTemplate: |-

@@ -92,7 +92,8 @@ function ensure-user {
                 -s email="${username}@example.com" \
                 -s emailVerified=true \
                 -s credentials='[{"type": "password", "value": "'"${password}"'", "temporary": false}]' \
-                -s enabled=true
+                -s enabled=true \
+                -i
         )
     else
         user_id=$(
@@ -105,6 +106,22 @@ function ensure-user {
                 | sed -E 's/.*"id" : "([^"]+)".*/\1/' \
                 | tee /dev/stderr
         )
+
+        if [ -n "${RECREATE_USER}" ]; then
+            kcadm.sh delete "users/${user_id}" \
+                -r "${realm}"
+
+            user_id=$(
+                kcadm.sh create users \
+                    -r "${realm}" \
+                    -s username="${username}" \
+                    -s email="${username}@example.com" \
+                    -s emailVerified=true \
+                    -s credentials='[{"type": "password", "value": "'"${password}"'", "temporary": false}]' \
+                    -s enabled=true \
+                    -i
+            )
+        fi
     fi
 
     for role in "$@"; do
@@ -112,6 +129,21 @@ function ensure-user {
                -r "${realm}" \
                --rolename "${role}" \
                --uusername "${username}"
+        group_id=$(
+          kcadm.sh get groups \
+            -r "${realm}" \
+            -q search="${role}" \
+            -F id \
+            | grep '"id"' \
+                | sed -E 's/.*"id" : "([^"]+)".*/\1/' \
+                | tee /dev/stderr
+        )
+        kcadm.sh update "users/${user_id}/groups/${group_id}" \
+               -r "${realm}" \
+               -s realm="${realm}" \
+               -s userId="${user_id}" \
+               -s groupId="${group_id}" \
+               -n
     done
 }
 
@@ -123,6 +155,17 @@ function ensure-role {
             -F name \
             ; then
         kcadm.sh create roles \
+            -r "${realm}" \
+            -s name="${role}" \
+            -i
+    fi
+    if ! kcadm.sh get groups \
+            -r "${realm}" \
+            -q search="${role}" \
+            -F name \
+            | grep '"name"' \
+            ; then
+        kcadm.sh create groups \
             -r "${realm}" \
             -s name="${role}" \
             -i
@@ -161,6 +204,8 @@ for role in ${CREATE_ROLES:-}; do
     ensure-role "${NEXUS_REALM}" "${role}"
 done
 
-while read -r username password roles ; do
-    ensure-user "${NEXUS_REALM}" "${username}" "${password}" ${roles}
-done <<< "${CREATE_USERS:-}"
+if [ -n "${CREATE_USERS:-}" ]; then
+    while read -r username password roles ; do
+        ensure-user "${NEXUS_REALM}" "${username}" "${password}" ${roles}
+    done <<< "${CREATE_USERS}"
+fi

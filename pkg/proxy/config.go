@@ -5,11 +5,8 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/meln5674/gotoken"
 	log "github.com/sirupsen/logrus"
-)
-
-const (
-	DefaultAddress = "127.0.0.1:8088"
 )
 
 type URL struct {
@@ -50,12 +47,14 @@ func (d *Duration) UnmarshalJSON(bytes []byte) error {
 }
 
 type ProxyOIDCConfig struct {
-	AccessTokenHeader string   `json:"accessTokenHeader"`
-	SyncInterval      Duration `json:"syncInterval"`
-	RoleTemplates     []string `json:"roleTemplates"`
-	DefaultRoles      []string `json:"defaultRoles"`
-	UserTemplate      string   `json:"userTemplate"`
-	WellKnownURL      URL      `json:"wellKnownURL"`
+	AccessTokenHeader string            `json:"accessTokenHeader"`
+	TokenMode         gotoken.TokenMode `json:"tokenMode"`
+	StripHeader       bool              `json:"stripHeader"`
+	SyncInterval      Duration          `json:"syncInterval"`
+	RoleTemplates     []string          `json:"roleTemplates"`
+	DefaultRoles      []string          `json:"defaultRoles"`
+	UserTemplate      string            `json:"userTemplate"`
+	WellKnownURL      URL               `json:"wellKnownURL"`
 }
 type ProxyNexusConfig struct {
 	Upstream      URL    `json:"upstream"`

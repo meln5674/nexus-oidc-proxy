@@ -53,7 +53,16 @@ oidc:
   # See https://pkg.go.dev/time#ParseDuration for syntax
   syncInterval: <#(s|m|h|...)>
   # Name of the HTTP header to expect the downstream proxy to set to the JWT OIDC Access token 
+  # The name of this field is misleading, due to backwards compatilibity. Either an access or ID token will work.
   accessTokenHeader: <header name>
+  # How to obtain the token from the header:
+  # raw: Use the header value as-is
+  # bearer: Expect the header to be in the format "Bearer <token>"
+  # basic-user: Expect the header to be in the format "Basic <base64 username:password>" and use the username
+  # basic-password: Expect the header to be in the format "Basic <base64 username:password>" and use the password
+  tokenMode: raw
+  # If true, remove the header named by accessTokenHeader from the request sent to nexus
+  stripHeader: false
   # Golang template, see https://pkg.go.dev/text/template for xyntax 
   # Should produce a nexus user API object to onboard that user in YAML/JSON format
   # You will have access to Sprig functions (https://masterminds.github.io/sprig/)

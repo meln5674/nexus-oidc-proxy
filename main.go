@@ -11,6 +11,7 @@ import (
 
 	"github.com/aquasecurity/yaml"
 
+	"github.com/meln5674/gotoken"
 	"github.com/meln5674/nexus-oidc-proxy/pkg/proxy"
 )
 
@@ -31,8 +32,14 @@ const (
 
 var (
 	ConfigPath          = flag.String("config", "./nexus-oidc-proxy.cfg", "Path to YAML/JSON formatted configuration file")
+	DefaultAddress      = "127.0.0.1:8088"
 	LogLevel            = log.InfoLevel
 	DefaultDefaultRoles = []string{"nx-anonymous"}
+	// DefaultAccessTokenHeader is the default value of the config oidc.tokenHeader.
+	// It assumes the server is being proxied by the OAuth2Proxy (https://github.com/oauth2-proxy/oauth2-proxy/) with --pass-access-token
+	DefaultTokenHeader = "X-Forwarded-Access-Token"
+	// DefaulTokenMode is the default value of the config oidc.tokenMode.
+	DefaultTokenMode = gotoken.TokenModeRaw
 )
 
 func main() {
@@ -73,12 +80,16 @@ func main() {
 		copy(config.OIDC.DefaultRoles, DefaultDefaultRoles)
 	}
 
-	if config.Nexus.RUTAuthHeader == "" {
-		log.Fatal("Must set nexus.ruthAuthHeader")
+	if config.OIDC.AccessTokenHeader == "" {
+		config.OIDC.AccessTokenHeader = DefaultTokenHeader
 	}
 
-	if config.OIDC.AccessTokenHeader == "" {
-		log.Fatal("Must set oidc.accessTokenHeader")
+	if config.OIDC.TokenMode == "" {
+		config.OIDC.TokenMode = DefaultTokenMode
+	}
+
+	if config.Nexus.RUTAuthHeader == "" {
+		log.Fatal("Must set nexus.ruthAuthHeader")
 	}
 
 	srv, err := proxy.NewProxy(config, credentials)

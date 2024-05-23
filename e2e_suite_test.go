@@ -27,8 +27,11 @@ func TestNexusOidcProxy(t *testing.T) {
 	RunSpecs(t, "NexusOidcProxy Suite")
 }
 
-var b *biloba.Biloba
-var gk8s gingk8s.Gingk8s
+var (
+	b         *biloba.Biloba
+	gk8s      gingk8s.Gingk8s
+	clusterID gingk8s.ClusterID
+)
 
 var _ = BeforeSuite(func(ctx context.Context) {
 	var err error
@@ -43,7 +46,7 @@ var _ = BeforeSuite(func(ctx context.Context) {
 	certManagerImageIDs := gk8s.ThirdPartyImages(certManagerImages...)
 	nexusOIDCProxyImageID := gk8s.CustomImage(&nexusOIDCProxyImage)
 
-	clusterID := gk8s.Cluster(&cluster, ingressNginxImageID, kubeIngressProxyImageID, certManagerImageIDs, nexusOIDCProxyImageID)
+	clusterID = gk8s.Cluster(&cluster, ingressNginxImageID, kubeIngressProxyImageID, certManagerImageIDs, nexusOIDCProxyImageID)
 
 	gk8s.ClusterAction(clusterID, "Watch Pods", &watchPods)
 
@@ -58,24 +61,14 @@ var _ = BeforeSuite(func(ctx context.Context) {
 	// The nexus chart is broken, so we have to do the install/update in two phases
 	nexusID := gk8s.Release(clusterID, &nexus, ingressNginxID)
 	nexusID = gk8s.Release(clusterID, &nexusAgain, nexusID)
-	nexusAdminPasswordSecretID := gk8s.Manifests(clusterID, &nexusAdminPasswordSecret, nexusID)
-
-	nexusOIDCProxyConfigID := gk8s.Manifests(clusterID, &nexusOIDCProxyConfig)
-	nexusOIDCProxyID := gk8s.Release(clusterID, &nexusOIDCProxy, nexusOIDCProxyConfigID, nexusAdminPasswordSecretID)
+	gk8s.Manifests(clusterID, &nexusAdminPasswordSecret, nexusID)
 
 	keycloakID := gk8s.Release(clusterID, &keycloak, ingressNginxID)
-	keycloakSetupID := gk8s.ClusterAction(clusterID, "Configure Keycloak", keycloakSetup, keycloakID)
-
-	oauth2ProxyConfigID := gk8s.Manifests(clusterID, &oauth2ProxyConfig)
-	oauth2ProxyID := gk8s.Release(clusterID, &oauth2Proxy, oauth2ProxyConfigID, keycloakSetupID)
-
-	_ = []gingk8s.ResourceDependency{
-		oauth2ProxyID,
-		nexusOIDCProxyID,
-	}
+	gk8s.ClusterAction(clusterID, "Configure Keycloak", keycloakSetup, keycloakID)
 
 	gk8s.Options(gingk8s.SuiteOpts{
-		NoSuiteCleanup: true,
+		// NoSuiteCleanup: true,
+		// NoSpecCleanup:  true,
 	})
 
 	gk8s.Setup(ctx)
@@ -237,9 +230,6 @@ var _ = BeforeSuite(func(ctx context.Context) {
 	}
 
 	biloba.SpinUpChrome(GinkgoT(), bopts...)
-	b = biloba.ConnectToChrome(GinkgoT())
-
-	keycloakLogin(true)
 })
 
 var (
@@ -389,6 +379,7 @@ var (
 			`nexus.properties.data.nexus\.scripts\.allowCreation`: true,
 			`nexus.properties.override`:                           true,
 		},
+		SkipDelete: true,
 	}
 
 	nexusAdminPasswordSecret = gingk8s.KubernetesManifests{
@@ -412,7 +403,7 @@ var (
 		},
 	}
 
-	nexusOIDCProxyConfig = gingk8s.KubernetesManifests{
+	nexusOIDCProxyConfigRawAccess = gingk8s.KubernetesManifests{
 		ResourceObjects: []interface{}{
 			gingk8s.NestedObject{
 				"apiVersion": "v1",
@@ -422,7 +413,25 @@ var (
 				},
 				"data": gingk8s.NestedObject{
 					"nexus-oidc-proxy.cfg": func(ctx context.Context, cluster gingk8s.Cluster) (string, error) {
-						bytes, err := os.ReadFile("integration-test/nexus-oidc-proxy.cfg")
+						bytes, err := os.ReadFile("integration-test/nexus-oidc-proxy.raw-access.cfg")
+						return string(bytes), err
+					},
+				},
+			},
+		},
+	}
+
+	nexusOIDCProxyConfigIDBearer = gingk8s.KubernetesManifests{
+		ResourceObjects: []interface{}{
+			gingk8s.NestedObject{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata": gingk8s.NestedObject{
+					"name": "nexus-oidc-proxy",
+				},
+				"data": gingk8s.NestedObject{
+					"nexus-oidc-proxy.cfg": func(ctx context.Context, cluster gingk8s.Cluster) (string, error) {
+						bytes, err := os.ReadFile("integration-test/nexus-oidc-proxy.bearer-id.cfg")
 						return string(bytes), err
 					},
 				},
@@ -448,6 +457,7 @@ var (
 			"image.pullPolicy":                "Never",
 			"image.repository":                nexusOIDCProxyImage.WithTag(""),
 			"image.tag":                       gingk8s.DefaultExtraCustomImageTags[0],
+			"logLevel":                        "debug",
 		},
 	}
 
@@ -491,10 +501,9 @@ var (
 		"NEXUS_CLIENT_ID=nexus",
 		"NEXUS_CALLBACK_URL=https://nexus.nexus-oidc-proxy-it.cluster/oauth2/callback",
 		"CREATE_ROLES='nx-role1 nx-role2'",
-		"CREATE_USERS='user-1 user-1-password nx-role1'",
 	))
 
-	oauth2ProxyConfig = gingk8s.KubernetesManifests{
+	oauth2ProxyConfigRawAccess = gingk8s.KubernetesManifests{
 		ResourceObjects: []interface{}{
 			gingk8s.NestedObject{
 				"apiVersion": "v1",
@@ -504,7 +513,25 @@ var (
 				},
 				"data": gingk8s.NestedObject{
 					"oauth2_proxy.cfg": func(ctx context.Context, cluster gingk8s.Cluster) (string, error) {
-						bytes, err := os.ReadFile("integration-test/oauth2_proxy.cfg")
+						bytes, err := os.ReadFile("integration-test/oauth2_proxy.raw-access.cfg")
+						return string(bytes), err
+					},
+				},
+			},
+		},
+	}
+
+	oauth2ProxyConfigIDBearer = gingk8s.KubernetesManifests{
+		ResourceObjects: []interface{}{
+			gingk8s.NestedObject{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata": gingk8s.NestedObject{
+					"name": "oauth2-proxy-cfg",
+				},
+				"data": gingk8s.NestedObject{
+					"oauth2_proxy.cfg": func(ctx context.Context, cluster gingk8s.Cluster) (string, error) {
+						bytes, err := os.ReadFile("integration-test/oauth2_proxy.bearer-id.cfg")
 						return string(bytes), err
 					},
 				},

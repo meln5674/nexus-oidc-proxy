@@ -16,6 +16,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/meln5674/gotoken"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/Masterminds/sprig/v3"
@@ -27,6 +28,7 @@ import (
 
 type ProxyState struct {
 	Config      *ProxyConfig
+	GetToken    gotoken.TokenGetter
 	Credentials *ProxyCredentials
 	UsersCache  sync.Map
 	httputil.ReverseProxy
@@ -44,6 +46,21 @@ func NewProxy(config ProxyConfig, credentials ProxyCredentials) (*ProxyState, er
 		Config:      &config,
 		Credentials: &credentials,
 	}
+
+	var ok bool
+	state.GetToken, ok = gotoken.GetTokenGetter(
+		config.OIDC.TokenMode,
+		&gotoken.TokenGetterArgs{
+			HeaderName: config.OIDC.AccessTokenHeader,
+			Parser:     jwt.NewParser(),
+			// TODO: Deal with signature
+			InsecureSkipVerification: true,
+		},
+	)
+	if !ok {
+		return nil, fmt.Errorf("Invalid tokenMode: %s", config.OIDC.TokenMode)
+	}
+
 	users, err := state.GetUsers(nil)
 	if err != nil {
 		log.Printf("Error while warming up users cache: %s. Starting with empty cache", err)
@@ -298,16 +315,14 @@ func (p *ProxyState) ChangePassword(userID, password string) error {
 }
 
 func (p *ProxyState) ExtractClaims(r *http.Request) (token *jwt.Token, err error) {
-	rawToken, ok := r.Header[p.Config.OIDC.AccessTokenHeader]
-	if !ok || len(rawToken) == 0 {
-		err = fmt.Errorf("No access token present (%s)", p.Config.OIDC.AccessTokenHeader)
-		return
+	token, ok, err := p.GetToken(r)
+	if err != nil {
+		return nil, err
 	}
-	//token, err := jwt.NewParser().Parse(rawToken[0], func(token *jwt.Token) (interface{}, error) { return token, nil })
-	claims := make(jwt.MapClaims)
-	// TODO: Deal with signature
-	token, _, err = jwt.NewParser().ParseUnverified(rawToken[0], claims)
-	return
+	if !ok {
+		return nil, fmt.Errorf("No access token present (%s)", p.Config.OIDC.AccessTokenHeader)
+	}
+	return token, nil
 }
 
 func (p *ProxyState) Director(r *http.Request) {
@@ -394,6 +409,10 @@ func (p *ProxyState) Director(r *http.Request) {
 	}
 	cachedUser.RolesLastSync = time.Now()
 	p.UsersCache.Store(existingUser.UserID, cachedUser)
+
+	if p.Config.OIDC.StripHeader {
+		r.Header.Del(p.Config.OIDC.AccessTokenHeader)
+	}
 }
 
 func (p *ProxyState) ModifyResponse(resp *http.Response) error {
