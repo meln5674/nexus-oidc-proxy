@@ -124,26 +124,43 @@ function ensure-user {
         fi
     fi
 
+    kcadm.sh get-roles \
+        -r "${realm}" \
+        --uusername "${username}" \
+        -F name \
+        | tee /dev/stderr \
+        | grep '"name"' \
+        | sed -E 's/.*"name" : "([^"]+)".*/\1/' \
+        | tee /dev/stderr \
+    | while read -r role ; do
+        kcadm.sh remove-roles \
+               -r "${realm}" \
+               --rolename "${role}" \
+               --uusername "${username}"
+    done
+
     for role in "$@"; do
         kcadm.sh add-roles \
                -r "${realm}" \
                --rolename "${role}" \
                --uusername "${username}"
-        group_id=$(
-          kcadm.sh get groups \
-            -r "${realm}" \
-            -q search="${role}" \
-            -F id \
-            | grep '"id"' \
-                | sed -E 's/.*"id" : "([^"]+)".*/\1/' \
-                | tee /dev/stderr
-        )
-        kcadm.sh update "users/${user_id}/groups/${group_id}" \
-               -r "${realm}" \
-               -s realm="${realm}" \
-               -s userId="${user_id}" \
-               -s groupId="${group_id}" \
-               -n
+        if [ "${role}" != "default-roles-${realm}" ]; then
+            group_id=$(
+              kcadm.sh get groups \
+                -r "${realm}" \
+                -q search="${role}" \
+                -F id \
+                | grep '"id"' \
+                    | sed -E 's/.*"id" : "([^"]+)".*/\1/' \
+                    | tee /dev/stderr
+            )
+            kcadm.sh update "users/${user_id}/groups/${group_id}" \
+                   -r "${realm}" \
+                   -s realm="${realm}" \
+                   -s userId="${user_id}" \
+                   -s groupId="${group_id}" \
+                   -n
+        fi
     done
 }
 
@@ -159,6 +176,11 @@ function ensure-role {
             -s name="${role}" \
             -i
     fi
+}
+
+function ensure-group {
+    realm=$1
+    group=$2
     if ! kcadm.sh get groups \
             -r "${realm}" \
             -q search="${role}" \
@@ -204,8 +226,12 @@ for role in ${CREATE_ROLES:-}; do
     ensure-role "${NEXUS_REALM}" "${role}"
 done
 
+for group in ${CREATE_GROUPS:-}; do
+    ensure-group "${NEXUS_REALM}" "${role}"
+done
+
 if [ -n "${CREATE_USERS:-}" ]; then
-    while read -r username password roles ; do
+    tr ';' '\n' <<< "${CREATE_USERS:-}" | while read -r username password roles ; do
         ensure-user "${NEXUS_REALM}" "${username}" "${password}" ${roles}
-    done <<< "${CREATE_USERS}"
+    done 
 fi

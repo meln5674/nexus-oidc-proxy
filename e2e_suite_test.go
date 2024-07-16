@@ -28,9 +28,12 @@ func TestNexusOidcProxy(t *testing.T) {
 }
 
 var (
-	b         *biloba.Biloba
 	gk8s      gingk8s.Gingk8s
 	clusterID gingk8s.ClusterID
+	bopts     = []chromedp.ExecAllocatorOption{
+		chromedp.ProxyServer("http://localhost:8080"),
+		chromedp.Flag("ignore-certificate-errors", "1"),
+	}
 )
 
 var _ = BeforeSuite(func(ctx context.Context) {
@@ -67,8 +70,8 @@ var _ = BeforeSuite(func(ctx context.Context) {
 	gk8s.ClusterAction(clusterID, "Configure Keycloak", keycloakSetup, keycloakID)
 
 	gk8s.Options(gingk8s.SuiteOpts{
-		// NoSuiteCleanup: true,
-		// NoSpecCleanup:  true,
+		NoSuiteCleanup: true,
+		NoSpecCleanup:  true,
 	})
 
 	gk8s.Setup(ctx)
@@ -217,11 +220,6 @@ var _ = BeforeSuite(func(ctx context.Context) {
 
 			nexusRequest(http.MethodPut, fmt.Sprintf("/service/rest/v1/security/users/%s", user["userId"]), &userReq, nil)
 		}
-	}
-
-	bopts := []chromedp.ExecAllocatorOption{
-		chromedp.ProxyServer("http://localhost:8080"),
-		chromedp.Flag("ignore-certificate-errors", "1"),
 	}
 
 	if os.Getenv("IT_IN_CONTAINER") != "" {
@@ -501,6 +499,7 @@ var (
 		"NEXUS_CLIENT_ID=nexus",
 		"NEXUS_CALLBACK_URL=https://nexus.nexus-oidc-proxy-it.cluster/oauth2/callback",
 		"CREATE_ROLES='nx-role1 nx-role2'",
+		"CREATE_GROUPS='nx-role1 nx-role2'",
 	))
 
 	oauth2ProxyConfigRawAccess = gingk8s.KubernetesManifests{
@@ -617,7 +616,7 @@ func execKeycloakSetup(pod string, extraEnv ...string) func(g gingk8s.Gingk8s, c
 	}
 }
 
-func keycloakLogin(needCredentials bool) {
+func keycloakLogin(b *biloba.Biloba, needCredentials bool, username, password string) {
 	GinkgoHelper()
 	By("Navigating to the oauth proxy sign-in")
 	nexusURL := fmt.Sprintf("https://%s/oauth2/sign_in", oauth2Proxy.Set["ingress.hostname"])
@@ -629,8 +628,8 @@ func keycloakLogin(needCredentials bool) {
 	b.Click(loginButton)
 	if needCredentials {
 		Eventually(b.Location, "5s").Should(HavePrefix(fmt.Sprintf("https://%s/", keycloak.Set["ingress.hostname"])))
-		b.SetValue("#username", "user-1")
-		b.SetValue("#password", "user-1-password")
+		b.SetValue("#username", username)
+		b.SetValue("#password", password)
 		b.Click("#kc-login")
 	}
 

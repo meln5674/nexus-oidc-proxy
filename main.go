@@ -69,6 +69,8 @@ func main() {
 		log.Fatal(err)
 	}
 
+	log.Debugf("Loaded config %#v\n", config)
+
 	credentials := proxy.ProxyCredentials{
 		Nexus: proxy.ProxyNexusCredentials{
 			Username: os.Getenv(NexusUsernameEnv),
