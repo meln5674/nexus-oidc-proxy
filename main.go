@@ -204,6 +204,7 @@ func NewProxy(config ProxyConfig, credentials ProxyCredentials) (*ProxyState, er
 		log.Printf("Error while warming up users cache: %s. Starting with empty cache", err)
 	} else {
 		for _, user := range users {
+			user := user
 			state.UsersCache.Store(user.UserID, UserCacheEntry{
 				User:     &user,
 				LastSync: time.Now(),
@@ -439,14 +440,15 @@ func (p *ProxyState) ChangePassword(userID, password string) error {
 	if err != nil {
 		return err
 	}
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		body = []byte(fmt.Sprintf("<Failed to read response body: %s>", err))
+	}
+	if len(body) == 0 {
+		body = []byte("<No body>")
+	}
+	log.Tracef("Password change body for user %s: %s\n", userID, string(body))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			body = []byte(fmt.Sprintf("<Failed to read response body: %s>", err))
-		}
-		if len(body) == 0 {
-			body = []byte("<No body>")
-		}
 		return fmt.Errorf("%s: %s", resp.Status, string(body))
 	}
 	return nil
@@ -466,59 +468,64 @@ func (p *ProxyState) ExtractClaims(r *http.Request) (token *jwt.Token, err error
 }
 
 func (p *ProxyState) Director(r *http.Request) {
+	log.Debug(r.URL.String())
 	incomingURL := *r.URL
 	r.URL.Host = p.Config.Nexus.Upstream.Inner.Host
 	r.URL.Scheme = p.Config.Nexus.Upstream.Inner.Scheme
 	r.URL.Path = p.Config.Nexus.Upstream.Inner.Path + incomingURL.Path
-	defer log.Debug(r)
+	defer log.Trace(r)
 	token, err := p.ExtractClaims(r)
 	if err != nil {
 		log.Errorf("Failed to extract claims: %s", err)
 		return
 	}
-	log.Debugf("Got token %#v\n", token)
+	log.Tracef("Got token %#v\n", token)
 	onboardedUser, err := p.GetOnboardedUser(token)
 	if err != nil {
 		log.Error(err)
 		return
 	}
 	var existingUser *NexusUser
-	var found bool
+	var exists bool
+	var skipSync bool
 	var cachedUser UserCacheEntry
-	cachedValue, exists := p.UsersCache.Load(onboardedUser.UserID)
-	if exists {
+	cachedValue, inCache := p.UsersCache.Load(onboardedUser.UserID)
+	if inCache {
 		cachedUser = cachedValue.(UserCacheEntry)
 	}
-	// If user in cache and recently updated, use cached user
-	if exists && time.Now().Before(cachedUser.LastSync.Add(p.Config.OIDC.SyncInterval.Inner)) {
+	lastSync := cachedUser.LastSync
+	nextSync := lastSync.Add(p.Config.OIDC.SyncInterval.Inner)
+	if inCache && time.Now().Before(nextSync) {
 		existingUser = cachedUser.User
-		found = true
-		log.Infof("Found user %s in local cache and in-sync\n", existingUser.UserID)
+		exists = true
+		skipSync = true
+		log.Debugf("Found user %s in local cache before next sync %v\n", existingUser.UserID, nextSync)
 		// Else retrieve user from nexus server
 	} else {
-		existingUser, found, err = p.GetUser(onboardedUser.UserID)
+		if inCache {
+			log.Debugf("Found user %s in local cache but after next sync %v\n", cachedUser.User.UserID, nextSync)
+		}
+		existingUser, exists, err = p.GetUser(onboardedUser.UserID)
 		if err != nil {
-			log.Errorf("Error while fetching user from Nexus: %s", err)
+			log.Errorf("Error while fetching user %s from Nexus: %s", onboardedUser.UserID, err)
 			return
 		}
-		if found {
-			cachedUser.LastSync = time.Now()
-		}
 	}
-	if !found {
+	if !exists {
 		// If user doesn't exist ensure we are not caching invalid data
 		p.UsersCache.Delete(onboardedUser.UserID)
+		log.Infof("Creating user %s", onboardedUser.UserID)
 		err = p.CreateUser(onboardedUser)
 		if err != nil {
 			log.Error(err)
 			return
 		}
-		existingUser, found, err = p.GetUser(onboardedUser.UserID)
+		existingUser, exists, err = p.GetUser(onboardedUser.UserID)
 		if err != nil {
 			log.Error(err)
 			return
 		}
-		if !found {
+		if !exists {
 			log.Warnf("User %s did not exist after creation?\n", onboardedUser.UserID)
 			return
 		}
@@ -527,28 +534,30 @@ func (p *ProxyState) Director(r *http.Request) {
 	// Update user information in case user is just created or refreshed from nexus server
 	cachedUser.User = existingUser
 	p.UsersCache.Store(onboardedUser.UserID, cachedUser)
-
 	r.Header.Add(p.Config.Nexus.RUTAuthHeader, existingUser.UserID)
-	lastSync := cachedUser.RolesLastSync
-	log.Debugf("User roles %s last synced at %v", existingUser.UserID, lastSync)
-	if time.Now().Before(lastSync.Add(p.Config.OIDC.SyncInterval.Inner)) {
+
+	if skipSync {
+		log.Debugf("User %s last synced at %v, next sync at %v, not syncing", existingUser.UserID, lastSync, nextSync)
 		return
 	}
-	log.Info("Sync period has expired, syncing roles")
+	log.Infof("Sync period for %s expired at %v, syncing roles", existingUser.UserID, nextSync)
 	roles, err := p.GetDesiredUserRoles(token)
 	if err != nil {
 		log.Error(err)
 		return
 	}
+	log.Debugf("Setting user %s roles %v", existingUser.UserID, roles)
 	existingUser.Roles = roles
-	log.Debugf("New User: %#v\n", existingUser)
 	err = p.UpdateUser(existingUser)
 	if err != nil {
 		log.Error(err)
 		return
 	}
-	cachedUser.RolesLastSync = time.Now()
+	lastSync = time.Now()
+	cachedUser.RolesLastSync = lastSync
+	nextSync = lastSync.Add(p.Config.OIDC.SyncInterval.Inner)
 	p.UsersCache.Store(existingUser.UserID, cachedUser)
+	log.Debugf("Next sync for user %s at %v", existingUser.UserID, nextSync)
 }
 
 func (p *ProxyState) ModifyResponse(resp *http.Response) error {
@@ -601,6 +610,7 @@ func (p *ProxyState) TokenEndpoint(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte(fmt.Sprintf(TokenPageFailureFmt, onboardedUser.UserID, p.Config.HTTP.TokenEndpoint.Path)))
 			return
 		}
+		log.Debugf("Set user %s password %s", onboardedUser.UserID, newPassword)
 		w.Write([]byte(fmt.Sprintf(TokenPageSuccessFmt, onboardedUser.UserID, p.Config.HTTP.TokenEndpoint.Path, newPassword)))
 		return
 
@@ -656,6 +666,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	log.Debugf("Loaded config %#v\n", config)
 
 	credentials := ProxyCredentials{
 		Nexus: ProxyNexusCredentials{

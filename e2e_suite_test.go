@@ -27,7 +27,7 @@ func TestNexusOidcProxy(t *testing.T) {
 	RunSpecs(t, "NexusOidcProxy Suite")
 }
 
-var b *biloba.Biloba
+// var b *biloba.Biloba
 var gk8s gingk8s.Gingk8s
 
 var _ = BeforeSuite(func(ctx context.Context) {
@@ -226,24 +226,23 @@ var _ = BeforeSuite(func(ctx context.Context) {
 		}
 	}
 
-	bopts := []chromedp.ExecAllocatorOption{
-		chromedp.ProxyServer("http://localhost:8080"),
-		chromedp.Flag("ignore-certificate-errors", "1"),
-	}
-
 	if os.Getenv("IT_IN_CONTAINER") != "" {
 		bopts = append(bopts, chromedp.NoSandbox)
 		GinkgoWriter.Printf("!!! WARNING: Sandbox disabled due to containerized environment detected from IT_IN_CONTAINER. This is insecure if this not actually a container!\n")
 	}
 
 	biloba.SpinUpChrome(GinkgoT(), bopts...)
-	b = biloba.ConnectToChrome(GinkgoT())
+	b := biloba.ConnectToChrome(GinkgoT())
 
-	keycloakLogin(true)
+	keycloakLogin(b, true, "user-1", "user-1-password")
 })
 
 var (
 	devMode = false // TODO get this from a env var
+	bopts   = []chromedp.ExecAllocatorOption{
+		chromedp.ProxyServer("http://localhost:8080"),
+		chromedp.Flag("ignore-certificate-errors", "1"),
+	}
 )
 
 var (
@@ -491,7 +490,7 @@ var (
 		"NEXUS_CLIENT_ID=nexus",
 		"NEXUS_CALLBACK_URL=https://nexus.nexus-oidc-proxy-it.cluster/oauth2/callback",
 		"CREATE_ROLES='nx-role1 nx-role2'",
-		"CREATE_USERS='user-1 user-1-password nx-role1'",
+		"CREATE_USERS='user-1 user-1-password default-roles-integration-test nx-role1;user-2 user-2-password default-roles-integration-test'",
 	))
 
 	oauth2ProxyConfig = gingk8s.KubernetesManifests{
@@ -590,7 +589,7 @@ func execKeycloakSetup(pod string, extraEnv ...string) func(g gingk8s.Gingk8s, c
 	}
 }
 
-func keycloakLogin(needCredentials bool) {
+func keycloakLogin(b *biloba.Biloba, needCredentials bool, username, password string) {
 	GinkgoHelper()
 	By("Navigating to the oauth proxy sign-in")
 	nexusURL := fmt.Sprintf("https://%s/oauth2/sign_in", oauth2Proxy.Set["ingress.hostname"])
@@ -602,8 +601,8 @@ func keycloakLogin(needCredentials bool) {
 	b.Click(loginButton)
 	if needCredentials {
 		Eventually(b.Location, "5s").Should(HavePrefix(fmt.Sprintf("https://%s/", keycloak.Set["ingress.hostname"])))
-		b.SetValue("#username", "user-1")
-		b.SetValue("#password", "user-1-password")
+		b.SetValue("#username", username)
+		b.SetValue("#password", password)
 		b.Click("#kc-login")
 	}
 

@@ -107,6 +107,21 @@ function ensure-user {
         )
     fi
 
+    kcadm.sh get-roles \
+        -r "${realm}" \
+        --uusername "${username}" \
+        -F name \
+        | tee /dev/stderr \
+        | grep '"name"' \
+        | sed -E 's/.*"name" : "([^"]+)".*/\1/' \
+        | tee /dev/stderr \
+    | while read -r role ; do
+        kcadm.sh remove-roles \
+               -r "${realm}" \
+               --rolename "${role}" \
+               --uusername "${username}"
+    done
+
     for role in "$@"; do
         kcadm.sh add-roles \
                -r "${realm}" \
@@ -161,6 +176,6 @@ for role in ${CREATE_ROLES:-}; do
     ensure-role "${NEXUS_REALM}" "${role}"
 done
 
-while read -r username password roles ; do
+tr ';' '\n' <<< "${CREATE_USERS:-}" | while read -r username password roles ; do
     ensure-user "${NEXUS_REALM}" "${username}" "${password}" ${roles}
-done <<< "${CREATE_USERS:-}"
+done 
