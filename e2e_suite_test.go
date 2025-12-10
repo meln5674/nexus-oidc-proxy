@@ -469,6 +469,8 @@ var (
 			},
 		},
 		Set: gingk8s.Object{
+			"image.repository":             "bitnamilegacy/keycloak",
+			"postgresql.image.repository":  "bitnamilegacy/postgresql",
 			"ingress.enabled":              true,
 			"ingress.ingressClassName":     "nginx",
 			"ingress.hostname":             "keycloak.nexus-oidc-proxy-it.cluster",
@@ -547,11 +549,14 @@ var (
 			},
 		},
 		Set: gingk8s.Object{
-			"ingress.enabled":              true,
-			"ingress.ingressClassName":     "nginx",
-			"ingress.hostname":             "nexus.nexus-oidc-proxy-it.cluster",
-			"ingress.extraTls[0].hosts[0]": "keycloak.nexus-oidc-proxy-it.cluster",
-			"configuration.clientID":       "nexus",
+			"global.security.allowInsecureImages": "true",
+			"image.repository":                    "bitnamilegacy/oauth2-proxy",
+			"redis.image.repository":              "bitnamilegacy/redis",
+			"ingress.enabled":                     true,
+			"ingress.ingressClassName":            "nginx",
+			"ingress.hostname":                    "nexus.nexus-oidc-proxy-it.cluster",
+			"ingress.extraTls[0].hosts[0]":        "keycloak.nexus-oidc-proxy-it.cluster",
+			"configuration.clientID":              "nexus",
 			"configuration.clientSecret": func(ctx context.Context, cluster gingk8s.Cluster) (string, error) {
 				var secret string
 				err := gk8s.KubectlExec(ctx, cluster, "sts/keycloak", "cat", []string{"/tmp/client-secret"}).WithStreams(gosh.FuncOut(gosh.SaveString(&secret))).Run()
