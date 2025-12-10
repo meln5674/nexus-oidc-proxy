@@ -183,13 +183,13 @@ function ensure-group {
     group=$2
     if ! kcadm.sh get groups \
             -r "${realm}" \
-            -q search="${role}" \
+            -q search="${group}" \
             -F name \
             | grep '"name"' \
             ; then
         kcadm.sh create groups \
             -r "${realm}" \
-            -s name="${role}" \
+            -s name="${group}" \
             -i
     fi
 }
@@ -227,7 +227,7 @@ for role in ${CREATE_ROLES:-}; do
 done
 
 for group in ${CREATE_GROUPS:-}; do
-    ensure-group "${NEXUS_REALM}" "${role}"
+    ensure-group "${NEXUS_REALM}" "${group}"
 done
 
 if [ -n "${CREATE_USERS:-}" ]; then
