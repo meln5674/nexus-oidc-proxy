@@ -340,6 +340,7 @@ func (p *ProxyState) Director(r *http.Request) {
 		return
 	}
 	log.Tracef("Got token %#v\n", token)
+	r.Header.Del(p.Config.OIDC.AccessTokenHeader)
 	onboardedUser, err := p.GetOnboardedUser(token)
 	if err != nil {
 		log.Error(err)
